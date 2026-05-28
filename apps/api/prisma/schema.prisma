@@ -1,0 +1,568 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ContactStatus {
+  ACTIVE
+  UNSUBSCRIBED
+  BOUNCED
+  SPAM_COMPLAINT
+  SUPPRESSED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  PAUSED
+  CANCELLED
+}
+
+enum AutomationStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum ChannelType {
+  EMAIL
+  SMS
+  WHATSAPP
+  WEBPUSH
+}
+
+enum EventType {
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  SPAM_COMPLAINT
+  UNSUBSCRIBED
+  CONVERTED
+}
+
+enum TemplateStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+// ─── Core Models ─────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  plan      Plan     @default(FREE)
+  timezone  String   @default("UTC")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  users              OrganizationUser[]
+  contacts           Contact[]
+  lists              ContactList[]
+  segments           Segment[]
+  templates          EmailTemplate[]
+  campaigns          Campaign[]
+  automations        Automation[]
+  forms              Form[]
+  channels           Channel[]
+  ipWarmup           IpWarmup?
+  customFields       CustomField[]
+  sendingDomains     SendingDomain[]
+  conversions        Conversion[]
+  followupSequences  FollowupSequence[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organizations OrganizationUser[]
+  refreshTokens RefreshToken[]
+}
+
+model OrganizationUser {
+  userId         String
+  organizationId String
+  role           Role     @default(MEMBER)
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@id([userId, organizationId])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// ─── Contacts ────────────────────────────────────────────────────────────────
+
+model Contact {
+  id             String        @id @default(cuid())
+  organizationId String
+  email          String
+  name           String?
+  phone          String?
+  status         ContactStatus @default(ACTIVE)
+  score          Int           @default(0)
+  tags           String[]
+  customFields   Json          @default("{}")
+  revenue        Float         @default(0)
+  lastOpenAt     DateTime?
+  lastClickAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  organization    Organization         @relation(fields: [organizationId], references: [id])
+  events          ContactEvent[]
+  listMemberships ListContact[]
+  enrollments     AutomationEnrollment[]
+  conversions         Conversion[]
+  followupEnrollments FollowupEnrollment[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId, status])
+  @@index([organizationId, score])
+  @@index([organizationId, createdAt])
+}
+
+model ContactEvent {
+  id         String    @id @default(cuid())
+  contactId  String
+  type       EventType
+  emailId    String?
+  campaignId String?
+  metadata   Json      @default("{}")
+  ipHash     String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  contact  Contact   @relation(fields: [contactId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([contactId, type])
+  @@index([campaignId])
+}
+
+model CustomField {
+  id             String @id @default(cuid())
+  organizationId String
+  key            String
+  label          String
+  type           String @default("text")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, key])
+}
+
+// ─── Lists ───────────────────────────────────────────────────────────────────
+
+model ContactList {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  contacts     ListContact[]
+  campaigns    CampaignList[]
+  forms        Form[]
+
+  @@index([organizationId])
+}
+
+model ListContact {
+  listId    String
+  contactId String
+  addedAt   DateTime @default(now())
+
+  list    ContactList @relation(fields: [listId], references: [id])
+  contact Contact     @relation(fields: [contactId], references: [id])
+
+  @@id([listId, contactId])
+}
+
+// ─── Segments ────────────────────────────────────────────────────────────────
+
+model Segment {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  conditions     Json
+  conditionLogic String   @default("AND")
+  isRfm          Boolean  @default(false)
+  rfmCategory    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  campaigns    CampaignSegment[]
+
+  @@index([organizationId])
+}
+
+// ─── Templates ───────────────────────────────────────────────────────────────
+
+model EmailTemplate {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  subject        String
+  previewText    String?
+  blocks         Json
+  htmlContent    String
+  mjmlContent    String?
+  status         TemplateStatus @default(DRAFT)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  versions     TemplateVersion[]
+  campaigns    Campaign[]
+
+  @@index([organizationId])
+}
+
+model TemplateVersion {
+  id         String   @id @default(cuid())
+  templateId String
+  version    Int
+  blocks     Json
+  htmlContent String
+  createdAt  DateTime @default(now())
+
+  template EmailTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([templateId, version])
+}
+
+// ─── Campaigns ───────────────────────────────────────────────────────────────
+
+model Campaign {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  subject        String
+  previewText    String?
+  fromName       String
+  fromEmail      String
+  templateId     String?
+  status         CampaignStatus @default(DRAFT)
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  isAbTest       Boolean        @default(false)
+  abConfig       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  template     EmailTemplate?    @relation(fields: [templateId], references: [id])
+  lists        CampaignList[]
+  segments     CampaignSegment[]
+  stats        CampaignStat?
+  emails       EmailSend[]
+  events       ContactEvent[]
+  conversions  Conversion[]
+
+  @@index([organizationId, status])
+}
+
+model CampaignList {
+  campaignId String
+  listId     String
+
+  campaign Campaign    @relation(fields: [campaignId], references: [id])
+  list     ContactList @relation(fields: [listId], references: [id])
+
+  @@id([campaignId, listId])
+}
+
+model CampaignSegment {
+  campaignId String
+  segmentId  String
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  segment  Segment  @relation(fields: [segmentId], references: [id])
+
+  @@id([campaignId, segmentId])
+}
+
+model CampaignStat {
+  id               String @id @default(cuid())
+  campaignId       String @unique
+  sent             Int    @default(0)
+  delivered        Int    @default(0)
+  opened           Int    @default(0)
+  uniqueOpened     Int    @default(0)
+  clicked          Int    @default(0)
+  uniqueClicked    Int    @default(0)
+  bounced          Int    @default(0)
+  spamComplaints   Int    @default(0)
+  unsubscribed     Int    @default(0)
+  revenue          Float  @default(0)
+  updatedAt        DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+}
+
+model EmailSend {
+  id         String    @id @default(cuid())
+  campaignId String
+  contactId  String
+  token      String    @unique @default(cuid())
+  sentAt     DateTime?
+  openedAt   DateTime?
+  clickedAt  DateTime?
+  bouncedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId])
+  @@index([token])
+}
+
+// ─── Automations ─────────────────────────────────────────────────────────────
+
+model Automation {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  status         AutomationStatus @default(DRAFT)
+  nodes          Json
+  edges          Json
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization           @relation(fields: [organizationId], references: [id])
+  enrollments  AutomationEnrollment[]
+
+  @@index([organizationId, status])
+}
+
+model AutomationEnrollment {
+  id             String           @id @default(cuid())
+  automationId   String
+  contactId      String
+  currentNodeId  String?
+  status         EnrollmentStatus @default(ACTIVE)
+  enrolledAt     DateTime         @default(now())
+  completedAt    DateTime?
+  nextRunAt      DateTime?
+  nodeExecutions Json             @default("{}")
+
+  automation Automation @relation(fields: [automationId], references: [id])
+  contact    Contact    @relation(fields: [contactId], references: [id])
+
+  @@unique([automationId, contactId])
+  @@index([status, nextRunAt])
+}
+
+// ─── Forms ───────────────────────────────────────────────────────────────────
+
+model Form {
+  id             String   @id @default(cuid())
+  organizationId String
+  listId         String?
+  automationId   String?
+  name           String
+  fields         Json
+  settings       Json     @default("{}")
+  doubleOptIn    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  list         ContactList? @relation(fields: [listId], references: [id])
+
+  @@index([organizationId])
+}
+
+// ─── Channels ────────────────────────────────────────────────────────────────
+
+model Channel {
+  id             String      @id @default(cuid())
+  organizationId String
+  type           ChannelType
+  config         Json
+  isActive       Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, type])
+}
+
+// ─── Deliverability ──────────────────────────────────────────────────────────
+
+model SendingDomain {
+  id             String   @id @default(cuid())
+  organizationId String
+  domain         String
+  spfStatus      String   @default("unknown")
+  dkimStatus     String   @default("unknown")
+  dmarcStatus    String   @default("unknown")
+  lastCheckedAt  DateTime?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, domain])
+}
+
+model IpWarmup {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  startedAt      DateTime @default(now())
+  currentWeek    Int      @default(1)
+  dailySentToday Int      @default(0)
+  lastResetAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+// ─── Revenue / Conversions ───────────────────────────────────────────────────
+
+model Conversion {
+  id             String   @id @default(cuid())
+  organizationId String
+  contactId      String
+  campaignId     String?
+  automationId   String?
+  orderId        String?
+  revenue        Float
+  attributedAt   DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  contact      Contact      @relation(fields: [contactId], references: [id])
+  campaign     Campaign?    @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId])
+  @@index([contactId])
+}
+
+// ─── Tracking Tokens ─────────────────────────────────────────────────────────
+
+model TrackingToken {
+  id          String    @id @default(cuid())
+  token       String    @unique @default(cuid())
+  type        String
+  contactId   String
+  campaignId  String?
+  url         String?
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([token])
+}
+
+// ─── Follow-up Sequences ──────────────────────────────────────────────────────
+
+model FollowupSequence {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  fromName       String
+  fromEmail      String
+  waitHours      Int      @default(24)
+  maxSteps       Int      @default(3)
+  status         String   @default("DRAFT")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id])
+  steps        FollowupStep[]
+  enrollments  FollowupEnrollment[]
+
+  @@index([organizationId])
+}
+
+model FollowupStep {
+  id         String @id @default(cuid())
+  sequenceId String
+  stepNumber Int
+  subject    String
+  body       String
+  delayHours Int    @default(24)
+
+  sequence FollowupSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@unique([sequenceId, stepNumber])
+  @@index([sequenceId])
+}
+
+model FollowupEnrollment {
+  id             String    @id @default(cuid())
+  sequenceId     String
+  contactId      String
+  organizationId String
+  currentStep    Int       @default(1)
+  status         String    @default("ACTIVE")
+  lastSentAt     DateTime?
+  nextSendAt     DateTime?
+  completedAt    DateTime?
+  enrolledAt     DateTime  @default(now())
+
+  sequence FollowupSequence @relation(fields: [sequenceId], references: [id])
+  contact  Contact          @relation(fields: [contactId], references: [id])
+
+  @@unique([sequenceId, contactId])
+  @@index([status, nextSendAt])
+  @@index([organizationId])
+}
