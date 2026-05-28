@@ -19,8 +19,13 @@ async function bootstrap() {
 
   await app.register(multipart as any, { limits: { fileSize: 10 * 1024 * 1024 } });
 
+  const allowedOrigins = [
+    process.env.APP_URL || 'http://localhost:3000',
+    'http://localhost:3000',
+    'https://mailmax-web.onrender.com',
+  ];
   app.enableCors({
-    origin: process.env.APP_URL || 'http://localhost:3000',
+    origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
     credentials: true,
   });
 

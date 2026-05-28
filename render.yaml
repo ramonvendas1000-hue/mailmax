@@ -5,7 +5,6 @@ services:
     dockerfilePath: apps/api/Dockerfile
     dockerContext: apps/api
     plan: free
-    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         value: postgresql://neondb_owner:npg_g6H8BvAnGjRk@ep-muddy-heart-aq3fnw8v.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require
@@ -44,10 +43,14 @@ services:
 
   - type: web
     name: mailmax-web
-    runtime: docker
-    dockerfilePath: apps/web/Dockerfile
-    dockerContext: apps/web
+    runtime: node
+    buildCommand: cd apps/web && npm install && NEXT_PUBLIC_API_URL=https://mailmax-api.onrender.com npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    startCommand: node apps/web/.next/standalone/server.js
     plan: free
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://mailmax-api.onrender.com
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
