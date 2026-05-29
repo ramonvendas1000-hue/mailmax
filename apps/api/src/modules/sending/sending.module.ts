@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { SendingService } from './sending.service';
-import { EmailWorker } from './email.worker';
+import { SesModule } from '../../shared/ses/ses.module';
 
 @Module({
-  imports: [],
-  providers: [SendingService, EmailWorker],
+  imports: [SesModule],
+  providers: [SendingService],
   exports: [SendingService],
 })
 export class SendingModule {}

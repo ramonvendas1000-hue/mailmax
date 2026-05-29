@@ -1,28 +1,14 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Queue } from 'bullmq';
 import { PrismaService } from '../../shared/prisma/prisma.service';
-
-export interface EmailJob {
-  campaignId: string;
-  contactId: string;
-  email: string;
-  name: string | null;
-  subject: string;
-  html: string;
-  fromEmail: string;
-  fromName: string;
-  trackingToken: string;
-  organizationId: string;
-  unsubscribeToken: string;
-}
+import { SesService } from '../../shared/ses/ses.service';
 
 @Injectable()
 export class SendingService {
   constructor(
-    @Inject('EMAIL_QUEUE') private emailQueue: Queue,
     private prisma: PrismaService,
     private config: ConfigService,
+    private ses: SesService,
   ) {}
 
   async enqueueCampaign(campaignId: string): Promise<number> {
@@ -36,8 +22,8 @@ export class SendingService {
 
     if (!campaign || !campaign.template) return 0;
 
+    // Build unique active contacts from all selected lists
     const contactsMap = new Map<string, any>();
-
     for (const cl of campaign.lists) {
       for (const lc of cl.list.contacts) {
         const c = lc.contact;
@@ -47,65 +33,79 @@ export class SendingService {
       }
     }
 
-    const trackingUrl = this.config.get<string>('TRACKING_URL', 'http://localhost:3001');
-    let enqueued = 0;
+    if (contactsMap.size === 0) return 0;
 
-    for (const contact of contactsMap.values()) {
-      const emailSend = await this.prisma.emailSend.create({
-        data: {
-          campaignId,
-          contactId: contact.id,
-        },
-      });
+    const trackingUrl = this.config.get<string>('TRACKING_URL', 'https://mailmax-api.onrender.com');
+    let sent = 0;
 
-      const html = this.injectTracking(
-        campaign.template!.htmlContent,
-        emailSend.token,
-        trackingUrl,
-        contact,
-        campaign.organizationId,
-      );
-
-      const job: EmailJob = {
-        campaignId,
-        contactId: contact.id,
-        email: contact.email,
-        name: contact.name,
-        subject: campaign.subject,
-        html,
-        fromEmail: campaign.fromEmail,
-        fromName: campaign.fromName,
-        trackingToken: emailSend.token,
-        organizationId: campaign.organizationId,
-        unsubscribeToken: emailSend.token,
-      };
-
-      await this.emailQueue.add(`email:${emailSend.token}`, job, {
-        jobId: emailSend.token,
-      });
-
-      enqueued++;
-    }
-
+    // Mark campaign as sending
     await this.prisma.campaign.update({
       where: { id: campaignId },
       data: { status: 'SENDING', sentAt: new Date() },
     });
 
-    return enqueued;
+    // Send directly to each contact
+    for (const contact of contactsMap.values()) {
+      try {
+        const emailSend = await this.prisma.emailSend.create({
+          data: { campaignId, contactId: contact.id },
+        });
+
+        const html = this.injectTracking(
+          campaign.template!.htmlContent,
+          emailSend.token,
+          trackingUrl,
+          contact,
+          campaign.organizationId,
+        );
+
+        await this.ses.sendEmail({
+          to: contact.email,
+          from: campaign.fromEmail,
+          fromName: campaign.fromName,
+          subject: campaign.subject,
+          html,
+        });
+
+        await this.prisma.emailSend.update({
+          where: { id: emailSend.id },
+          data: { sentAt: new Date() },
+        });
+
+        await this.prisma.campaignStat.upsert({
+          where: { campaignId },
+          create: { campaignId, sent: 1 },
+          update: { sent: { increment: 1 } },
+        });
+
+        await this.prisma.contactEvent.create({
+          data: {
+            contactId: contact.id,
+            campaignId,
+            type: 'SENT',
+            metadata: { token: emailSend.token },
+          },
+        });
+
+        sent++;
+      } catch (err) {
+        console.error(`[Sending] Erro ao enviar para ${contact.email}:`, (err as Error).message);
+      }
+    }
+
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: sent > 0 ? 'SENT' : 'DRAFT' },
+    });
+
+    return sent;
   }
 
-  private injectTracking(
-    html: string,
-    token: string,
-    trackingUrl: string,
-    contact: any,
-    organizationId: string,
-  ): string {
+  private injectTracking(html: string, token: string, trackingUrl: string, contact: any, _orgId: string): string {
     const openPixel = `<img src="${trackingUrl}/track/open/${token}" width="1" height="1" alt="" style="display:none" />`;
 
     let result = html
-      .replace(/\{\{contact\.name\}\}/g, contact.name ?? '')
+      .replace(/\{\{contact\.name\}\}/g, contact.name ?? contact.email)
       .replace(/\{\{contact\.email\}\}/g, contact.email)
       .replace(/\{\{unsubscribe_link\}\}/g, `${trackingUrl}/track/unsub/${token}`)
       .replace(/\{\{view_in_browser_link\}\}/g, `${trackingUrl}/track/view/${token}`);
@@ -114,12 +114,15 @@ export class SendingService {
       /href="(https?:\/\/[^"]+)"/g,
       (match, url) => {
         if (url.includes(trackingUrl)) return match;
-        const encoded = encodeURIComponent(url);
-        return `href="${trackingUrl}/track/click/${token}?url=${encoded}"`;
+        return `href="${trackingUrl}/track/click/${token}?url=${encodeURIComponent(url)}"`;
       },
     );
 
-    result = result.replace('</body>', `${openPixel}</body>`);
+    if (result.includes('</body>')) {
+      result = result.replace('</body>', `${openPixel}</body>`);
+    } else {
+      result += openPixel;
+    }
 
     return result;
   }
