@@ -26,11 +26,20 @@ export default function ContactsPage() {
   const [showImport, setShowImport] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<any>(null);
+  const [importListOption, setImportListOption] = useState<'none' | 'existing' | 'new'>('none');
+  const [selectedListId, setSelectedListId] = useState('');
+  const [newListName, setNewListName] = useState('');
   const [form, setForm] = useState({ email: '', name: '', phone: '', tags: '' });
 
   const { data, isLoading } = useQuery({
     queryKey: ['contacts', page, search],
     queryFn: () => api.get('/contacts', { params: { page, limit: 50, search: search || undefined } }).then((r) => r.data),
+  });
+
+  const { data: listsData } = useQuery({
+    queryKey: ['lists'],
+    queryFn: () => api.get('/lists').then((r) => r.data.data),
+    enabled: showImport,
   });
 
   const createMutation = useMutation({
@@ -53,9 +62,34 @@ export default function ContactsPage() {
       });
       return res.data.data;
     },
-    onSuccess: (result) => {
-      setImportResult(result);
+    onSuccess: async (result) => {
       qc.invalidateQueries({ queryKey: ['contacts'] });
+
+      // After import, add to list if selected
+      if (importListOption !== 'none' && result.created + result.updated > 0) {
+        try {
+          let listId = selectedListId;
+
+          // Create new list if needed
+          if (importListOption === 'new' && newListName.trim()) {
+            const listRes = await api.post('/lists', { name: newListName.trim() });
+            listId = listRes.data.data.id;
+            qc.invalidateQueries({ queryKey: ['lists'] });
+          }
+
+          if (listId) {
+            // Get all contacts to add to the list
+            const contactsRes = await api.get('/contacts?limit=500');
+            const contactIds = contactsRes.data.data.map((c: any) => c.id);
+            await api.post(`/lists/${listId}/contacts`, { contactIds });
+            toast.success(`Contatos importados e adicionados à lista!`);
+          }
+        } catch {
+          toast.error('Contatos importados, mas erro ao adicionar à lista');
+        }
+      }
+
+      setImportResult(result);
     },
     onError: (err: any) => toast.error(err.response?.data?.message || 'Erro ao importar arquivo'),
   });
@@ -103,6 +137,9 @@ export default function ContactsPage() {
     setShowImport(false);
     setImportFile(null);
     setImportResult(null);
+    setImportListOption('none');
+    setSelectedListId('');
+    setNewListName('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -241,12 +278,10 @@ export default function ContactsPage() {
 
             {!importResult ? (
               <div className="space-y-4">
-                {/* Instructions */}
                 <div className="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-sm text-gray-400 space-y-1">
                   <p className="font-medium text-gray-300 mb-2">Formatos aceitos: CSV ou Excel (.xlsx)</p>
-                  <p>• A planilha deve ter uma coluna <span className="text-indigo-400 font-mono">email</span> (obrigatória)</p>
+                  <p>• Coluna <span className="text-indigo-400 font-mono">email</span> obrigatória</p>
                   <p>• Colunas opcionais: <span className="font-mono text-gray-300">name</span>, <span className="font-mono text-gray-300">phone</span></p>
-                  <p>• Primeira linha deve ser o cabeçalho</p>
                 </div>
 
                 <button onClick={handleDownloadTemplate}
@@ -254,15 +289,14 @@ export default function ContactsPage() {
                   <Download className="w-4 h-4" /> Baixar modelo CSV
                 </button>
 
-                {/* File drop area */}
+                {/* File area */}
                 <label className="block cursor-pointer">
                   <div className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${importFile ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-[#30363d] hover:border-[#404860]'}`}>
                     {importFile ? (
                       <div className="space-y-2">
                         <FileSpreadsheet className="w-10 h-10 mx-auto text-indigo-400" />
                         <p className="text-sm font-medium text-gray-200">{importFile.name}</p>
-                        <p className="text-xs text-gray-500">{(importFile.size / 1024).toFixed(1)} KB</p>
-                        <p className="text-xs text-indigo-400">Clique para trocar o arquivo</p>
+                        <p className="text-xs text-indigo-400">Clique para trocar</p>
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -275,6 +309,40 @@ export default function ContactsPage() {
                   <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} className="hidden" />
                 </label>
 
+                {/* Add to list option */}
+                <div className="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 space-y-3">
+                  <p className="text-sm font-medium text-gray-300">Adicionar a uma lista após importar?</p>
+                  <div className="flex gap-2">
+                    {[
+                      { value: 'none', label: 'Não' },
+                      { value: 'existing', label: 'Lista existente' },
+                      { value: 'new', label: 'Criar nova lista' },
+                    ].map((opt) => (
+                      <button key={opt.value}
+                        onClick={() => setImportListOption(opt.value as any)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${importListOption === opt.value ? 'border-indigo-500 bg-indigo-500/15 text-indigo-400' : 'border-[#30363d] text-gray-500 hover:text-gray-300'}`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {importListOption === 'existing' && (
+                    <select value={selectedListId} onChange={(e) => setSelectedListId(e.target.value)}
+                      className={INPUT}>
+                      <option value="">Selecione uma lista...</option>
+                      {listsData?.map((l: any) => (
+                        <option key={l.id} value={l.id}>{l.name}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {importListOption === 'new' && (
+                    <input value={newListName} onChange={(e) => setNewListName(e.target.value)}
+                      placeholder="Nome da nova lista *"
+                      className={INPUT} />
+                  )}
+                </div>
+
                 <div className="flex gap-2 pt-1">
                   <button onClick={closeImport}
                     className="flex-1 py-2 border border-[#30363d] text-gray-400 rounded-lg text-sm hover:bg-[#262c36] transition-colors">Cancelar</button>
@@ -285,7 +353,6 @@ export default function ContactsPage() {
                 </div>
               </div>
             ) : (
-              /* Import result */
               <div className="space-y-4">
                 <div className="flex items-center gap-3 p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
                   <CheckCircle className="w-6 h-6 text-green-400 shrink-0" />
@@ -310,7 +377,7 @@ export default function ContactsPage() {
                 </div>
                 {importResult.errors?.length > 0 && (
                   <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                    <p className="text-xs font-semibold text-red-400 mb-1">Erros ({importResult.errors.length}):</p>
+                    <p className="text-xs font-semibold text-red-400 mb-1">Erros:</p>
                     {importResult.errors.slice(0, 5).map((e: string, i: number) => (
                       <p key={i} className="text-xs text-gray-500">{e}</p>
                     ))}
