@@ -52,5 +52,5 @@ services:
         value: https://mailmax-api.onrender.com
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
+      - key: HOSTNAME
+        value: 0.0.0.0
