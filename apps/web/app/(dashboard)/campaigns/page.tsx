@@ -37,16 +37,14 @@ export default function CampaignsPage() {
     queryFn: () => api.get('/campaigns').then((r) => r.data),
   });
 
-  const { data: templates } = useQuery({
+  const { data: templates, isLoading: templatesLoading } = useQuery({
     queryKey: ['templates'],
     queryFn: () => api.get('/templates').then((r) => r.data.data),
-    enabled: showCreate,
   });
 
-  const { data: lists } = useQuery({
+  const { data: lists, isLoading: listsLoading } = useQuery({
     queryKey: ['lists'],
     queryFn: () => api.get('/lists').then((r) => r.data.data),
-    enabled: showCreate,
   });
 
   const createMutation = useMutation({
@@ -231,7 +229,9 @@ export default function CampaignsPage() {
 
                 <div>
                   <label className="text-xs text-gray-500 block mb-1">Template de email *</label>
-                  {!templates?.length ? (
+                  {templatesLoading ? (
+                    <div className="bg-[#0d1117] border border-[#30363d] rounded-lg p-3 text-xs text-gray-500">Carregando templates...</div>
+                  ) : !templates?.length ? (
                     <div className="bg-[#0d1117] border border-[#30363d] rounded-lg p-3 text-xs text-yellow-400">
                       ⚠️ Nenhum template criado. Crie um em <strong>Templates</strong> antes de criar a campanha.
                     </div>
@@ -248,7 +248,9 @@ export default function CampaignsPage() {
 
                 <div>
                   <label className="text-xs text-gray-500 block mb-2">Listas de contatos * (selecione uma ou mais)</label>
-                  {!lists?.length ? (
+                  {listsLoading ? (
+                    <div className="bg-[#0d1117] border border-[#30363d] rounded-lg p-3 text-xs text-gray-500">Carregando listas...</div>
+                  ) : !lists?.length ? (
                     <div className="bg-[#0d1117] border border-[#30363d] rounded-lg p-3 text-xs text-yellow-400">
                       ⚠️ Nenhuma lista criada. Importe contatos primeiro.
                     </div>
