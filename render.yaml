@@ -26,14 +26,10 @@ services:
         value: https://mailmax-api.onrender.com
       - key: TRACKING_URL
         value: https://mailmax-api.onrender.com
-      - key: AWS_REGION
-        value: us-east-1
-      - key: AWS_ACCESS_KEY_ID
-        value: placeholder
-      - key: AWS_SECRET_ACCESS_KEY
-        value: placeholder
+      - key: RESEND_API_KEY
+        value: re_YXzGADGn_HSANgsRkaXnggrN9H6XjWPX8
       - key: SES_FROM_EMAIL
-        value: noreply@mailmax.com
+        value: onboarding@resend.dev
       - key: MAX_DAILY_SENDS_FREE
         value: 500
       - key: MAX_DAILY_SENDS_STARTER
