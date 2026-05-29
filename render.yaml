@@ -44,7 +44,7 @@ services:
   - type: web
     name: mailmax-web
     runtime: node
-    buildCommand: cd apps/web && npm install && NEXT_PUBLIC_API_URL=https://mailmax-api.onrender.com npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    buildCommand: cd apps/web && npm install --include=dev && NEXT_PUBLIC_API_URL=https://mailmax-api.onrender.com npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
     startCommand: node apps/web/.next/standalone/server.js
     plan: free
     envVars:
